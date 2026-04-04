@@ -3,7 +3,7 @@ from class_esp32 import ESP32
 
 class BBrobot:
     def __init__(self):
-        # ✅ ESP32 connection
+        # ESP32 connection
         self.esp = ESP32("/dev/ttyUSB0")  # change if needed
 
         # Robot geometry
