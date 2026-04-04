@@ -34,7 +34,7 @@ try:
         frame = camera.take_pic()
 
         if frame is None:
-            print("⚠️ No frame")
+            print(" No frame")
             continue
 
         # -------------------------
