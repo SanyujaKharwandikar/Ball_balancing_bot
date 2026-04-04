@@ -14,7 +14,7 @@ class CameraTest:
         cv2.imshow("Live", image)
 
     def find_ball(self, image):
-        # ❌ REMOVE BGRA conversion (not needed on laptop)
+        #  REMOVE BGRA conversion (not needed on laptop)
 
         # Convert to HSV
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -63,14 +63,14 @@ class CameraTest:
         return int(cx), int(cy), int(area)
 
 
-# 🚀 MAIN
+#  MAIN
 cam = CameraTest()
 
-# ✅ Use your webcam index = 2
+#  Use your webcam index = 2
 cap = cv2.VideoCapture(2, cv2.CAP_V4L2)
 
 if not cap.isOpened():
-    print("❌ Camera not opening")
+    print(" Camera not opening")
     exit()
 
 # Set resolution
@@ -80,7 +80,7 @@ cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 while True:
     ret, frame = cap.read()
     if not ret:
-        print("❌ Frame not received")
+        print(" Frame not received")
         break
 
     result = cam.find_ball(frame)
