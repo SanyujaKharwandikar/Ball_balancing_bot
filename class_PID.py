@@ -22,10 +22,10 @@ class PID:
 
         self.last_time = None
 
-        # 🔥 IMPORTANT: anti-windup
+        #  IMPORTANT: anti-windup
         self.integral_limit = 50
 
-        # 🔥 IMPORTANT: output limit (phi limit)
+        #  IMPORTANT: output limit (phi limit)
         self.output_limit = 20
 
     # -----------------------------
@@ -97,7 +97,7 @@ class PID:
 
             phi = self.k * math.sqrt(output_x**2 + output_y**2)
 
-            # 🔥 LIMIT OUTPUT
+            #  LIMIT OUTPUT
             phi = min(phi, self.output_limit)
 
         # -------------------------
