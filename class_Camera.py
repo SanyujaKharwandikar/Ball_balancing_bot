@@ -7,11 +7,11 @@ class Camera:
         self.height = 480
         self.width = 640
 
-        # ✅ IMPORTANT: use working camera index
+        # IMPORTANT: use working camera index
         self.cap = cv2.VideoCapture(2)
 
         if not self.cap.isOpened():
-            print("❌ Camera not opening")
+            print(" Camera not opening")
             exit()
 
         # Force stable format (fix black screen)
@@ -23,14 +23,14 @@ class Camera:
         self.lower_pink = np.array([140, 120, 70])
         self.upper_pink = np.array([180, 255, 255])
 
-        print("✅ Webcam initialized")
+        print(" Webcam initialized")
 
     # -----------------------------
     def take_pic(self):
         ret, frame = self.cap.read()
 
         if not ret:
-            print("❌ Frame not received")
+            print(" Frame not received")
             return None
 
         return frame
