@@ -1,131 +1,114 @@
-import math
-import time
-from adafruit_servokit import ServoKit
+import cv2
+import numpy as np
+import subprocess
 
-# -----------------------------
-# PCA9685 Setup
-# -----------------------------
-kit = ServoKit(channels=16)
+class Camera:
+    def __init__(self):
+        # 🔧 You can change this
+        self.width = 1280   # try 1280 first (stable)
+        self.height = 720
 
-# -----------------------------
-# OFFSETS (TUNE THESE!)
-# -----------------------------
-OFFSET_S1 = 0
-OFFSET_S2 = 0
-OFFSET_S3 = 0
+        # ✅ Start Pi camera (NO preview window)
+        cmd = [
+            "rpicam-vid",
+            "-t", "0",
+            "--width", str(self.width),
+            "--height", str(self.height),
+            "--framerate", "30",
+            "--codec", "mjpeg",   # 🔥 IMPORTANT FIX
+            "--inline",
+            "--quality", "90",
+            "-o", "-"
+        ]
 
-# -----------------------------
-# CLAMP FUNCTION
-# -----------------------------
-def clamp(angle):
-    return max(0, min(180, angle))
+        self.pipe = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=10**8)
 
+        # Buffer for MJPEG decoding
+        self.buffer = b""
 
-# -----------------------------
-# ROBOT CONTROLLER
-# -----------------------------
-class RobotController:
+        # 🎯 Pink detection range (tune if needed)
+        self.lower_pink = np.array([5, 50, 50])
+        self.upper_pink = np.array([25, 255, 255])
 
-    def __init__(self, model):
-        self.model = model
-
-        print("✅ RobotController initialized (PCA9685)")
-
-    # -----------------------------
-    # LOW LEVEL SERVO CONTROL
-    # -----------------------------
-    def set_motor_angles(self, theta1, theta2, theta3):
-
-        # Apply clamp + offsets
-        a1 = clamp(theta1 + OFFSET_S1)
-        a2 = clamp(theta2 + OFFSET_S2)
-        a3 = clamp(theta3 + OFFSET_S3)
-
-        # Send to PCA9685
-        kit.servo[0].angle = a1
-        kit.servo[1].angle = a2
-        kit.servo[2].angle = a3
-
-        # Debug (optional)
-        # print(f"Servo Angles → {a1:.2f}, {a2:.2f}, {a3:.2f}")
+        print("✅ Pi Camera started (MJPEG, no preview)")
 
     # -----------------------------
-    # VECTOR MODE CONTROL
-    # -----------------------------
-    def Goto_N_time_vector(self, x, y, z, speed=8):
+    def take_pic(self):
+        data = self.pipe.stdout.read(4096)
 
-        # Convert vector → motor angles using IK
-        result = self.model.inverse_kinematics_vector(x, y, z)
+        if not data:
+            return None
 
-        if not result:
-            print("❌ IK failed")
-            return
+        self.buffer += data
 
-        theta1, theta2, theta3 = result
+        # Find JPEG frame
+        start = self.buffer.find(b'\xff\xd8')
+        end = self.buffer.find(b'\xff\xd9')
 
-        self.set_motor_angles(theta1, theta2, theta3)
+        if start != -1 and end != -1:
+            jpg = self.buffer[start:end+2]
+            self.buffer = self.buffer[end+2:]
 
-    # -----------------------------
-    # SPHERICAL CONTROL (USED IN MAIN)
-    # -----------------------------
-    def Goto_N_time_spherical(self, theta, phi, speed=8):
+            frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+            return frame
 
-        # Convert spherical → Cartesian
-        z = math.cos(math.radians(phi))
-        r = math.sin(math.radians(phi))
-
-        x = r * math.cos(math.radians(theta))
-        y = r * math.sin(math.radians(theta))
-
-        self.Goto_N_time_vector(x, y, z, speed)
+        return None
 
     # -----------------------------
-    # SMOOTH MOVE (OPTIONAL)
+    def find_ball(self, image):
+        if image is None:
+            return -1, -1, 0
+
+        # Convert to HSV
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+        # Mask
+        mask = cv2.inRange(hsv, self.lower_pink, self.upper_pink)
+
+        # Clean noise
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        # Find contours
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if len(contours) == 0:
+            self.display(image, mask)
+            return -1, -1, 0
+
+        largest = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest)
+
+        if area < 300:
+            self.display(image, mask)
+            return -1, -1, 0
+
+        (x, y), radius = cv2.minEnclosingCircle(largest)
+
+        # Draw detection
+        cv2.circle(image, (int(x), int(y)), int(radius), (0, 255, 0), 2)
+        cv2.circle(image, (int(x), int(y)), 5, (0, 0, 255), -1)
+
+        self.display(image, mask)
+
+        # 🎯 Center coordinates
+        cx = x - self.width / 2
+        cy = y - self.height / 2
+
+        # 🔄 Rotate coordinates (IMPORTANT)
+        cx, cy = -cy, cx
+
+        return int(cx), int(cy), int(area)
+
     # -----------------------------
-    def Goto_time_vector(self, x, y, z, duration=1.0):
-
-        steps = int(duration * 50)  # 50 Hz
-
-        for i in range(steps):
-            self.Goto_N_time_vector(x, y, z)
-            time.sleep(duration / steps)
+    def display(self, image, mask):
+        cv2.imshow("Live", image)
+        cv2.imshow("Mask", mask)
+        cv2.waitKey(1)
 
     # -----------------------------
-    # INIT POSITION
-    # -----------------------------
-    def initialize(self):
-        print("Initializing robot...")
-
-        # flat plate (z = 1)
-        self.Goto_N_time_vector(0, 0, 1)
-
-        time.sleep(1)
-
-
-# -----------------------------
-# TEST BLOCK
-# -----------------------------
-if __name__ == "__main__":
-
-    from robotKinematics import RobotKinematics
-
-    model = RobotKinematics()
-    rc = RobotController(model)
-
-    rc.initialize()
-
-    print("Testing motion...")
-
-    while True:
-        # small tilt test
-        rc.Goto_N_time_spherical(0, 5)
-        time.sleep(1)
-
-        rc.Goto_N_time_spherical(90, 5)
-        time.sleep(1)
-
-        rc.Goto_N_time_spherical(180, 5)
-        time.sleep(1)
-
-        rc.Goto_N_time_spherical(270, 5)
-        time.sleep(1)
+    def clean_up_cam(self):
+        self.pipe.terminate()
+        cv2.destroyAllWindows()
+        print("📷 Camera stopped")
