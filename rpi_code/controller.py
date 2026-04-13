@@ -1,58 +1,56 @@
 import cv2
 import numpy as np
-import subprocess
 
 class Camera:
     def __init__(self):
-        # 🔧 You can change this
-        self.width = 1280   # try 1280 first (stable)
-        self.height = 720
+        # 🔥 High resolution (your requirement)
+        self.width = 1640
+        self.height = 1232
 
-        # ✅ Start Pi camera (NO preview window)
-        cmd = [
-            "rpicam-vid",
-            "-t", "0",
-            "--width", str(self.width),
-            "--height", str(self.height),
-            "--framerate", "30",
-            "--codec", "mjpeg",   # 🔥 IMPORTANT FIX
-            "--inline",
-            "--quality", "90",
-            "-o", "-"
-        ]
+        # IMPORTANT: use working camera index
+        self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)  # try 0 or 2 depending on your setup
 
-        self.pipe = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=10**8)
+        if not self.cap.isOpened():
+            print("❌ Camera not opening")
+            exit()
 
-        # Buffer for MJPEG decoding
-        self.buffer = b""
+        # 🔥 Reduce lag (VERY IMPORTANT)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-        # 🎯 Pink detection range (tune if needed)
-        self.lower_pink = np.array([5, 50, 50])
-        self.upper_pink = np.array([25, 255, 255])
+        # Force MJPEG (better for high resolution)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
-        print("✅ Pi Camera started (MJPEG, no preview)")
+        # Set resolution
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+
+        # Try to increase FPS
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
+
+        # Pink HSV range (your working values)
+        self.lower_pink = np.array([140, 120, 70])
+        self.upper_pink = np.array([180, 255, 255])
+
+        print("✅ Camera initialized (High Res, Low Lag)")
 
     # -----------------------------
     def take_pic(self):
-        data = self.pipe.stdout.read(4096)
+        # 🔥 Flush old frames (IMPORTANT for lag)
+        for _ in range(2):
+            self.cap.grab()
 
-        if not data:
+        ret, frame = self.cap.read()
+
+        if not ret:
+            print("❌ Frame not received")
             return None
 
-        self.buffer += data
+        return frame
 
-        # Find JPEG frame
-        start = self.buffer.find(b'\xff\xd8')
-        end = self.buffer.find(b'\xff\xd9')
-
-        if start != -1 and end != -1:
-            jpg = self.buffer[start:end+2]
-            self.buffer = self.buffer[end+2:]
-
-            frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
-            return frame
-
-        return None
+    # -----------------------------
+    def show_video(self, image):
+        cv2.imshow("Live", image)
+        cv2.waitKey(1)
 
     # -----------------------------
     def find_ball(self, image):
@@ -60,10 +58,10 @@ class Camera:
             return -1, -1, 0
 
         # Convert to HSV
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
         # Mask
-        mask = cv2.inRange(hsv, self.lower_pink, self.upper_pink)
+        mask = cv2.inRange(image_hsv, self.lower_pink, self.upper_pink)
 
         # Clean noise
         kernel = np.ones((5, 5), np.uint8)
@@ -71,44 +69,37 @@ class Camera:
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
         # Find contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-        if len(contours) == 0:
-            self.display(image, mask)
-            return -1, -1, 0
+        if contours:
+            largest_contour = max(contours, key=cv2.contourArea)
+            area = cv2.contourArea(largest_contour)
 
-        largest = max(contours, key=cv2.contourArea)
-        area = cv2.contourArea(largest)
+            if area > 200:
+                (x, y), radius = cv2.minEnclosingCircle(largest_contour)
 
-        if area < 300:
-            self.display(image, mask)
-            return -1, -1, 0
+                # Draw
+                cv2.circle(image, (int(x), int(y)), int(radius), (0, 255, 0), 2)
+                cv2.circle(image, (int(x), int(y)), 5, (0, 0, 255), -1)
 
-        (x, y), radius = cv2.minEnclosingCircle(largest)
+                # Show debug
+                cv2.imshow("Mask", mask)
+                self.show_video(image)
 
-        # Draw detection
-        cv2.circle(image, (int(x), int(y)), int(radius), (0, 255, 0), 2)
-        cv2.circle(image, (int(x), int(y)), 5, (0, 0, 255), -1)
+                # Center transform
+                x -= self.width / 2
+                y -= self.height / 2
+                x, y = -y, x
 
-        self.display(image, mask)
+                return int(x), int(y), int(area)
 
-        # 🎯 Center coordinates
-        cx = x - self.width / 2
-        cy = y - self.height / 2
-
-        # 🔄 Rotate coordinates (IMPORTANT)
-        cx, cy = -cy, cx
-
-        return int(cx), int(cy), int(area)
-
-    # -----------------------------
-    def display(self, image, mask):
-        cv2.imshow("Live", image)
+        # Show even if not found
         cv2.imshow("Mask", mask)
-        cv2.waitKey(1)
+        self.show_video(image)
+
+        return -1, -1, 0
 
     # -----------------------------
     def clean_up_cam(self):
-        self.pipe.terminate()
+        self.cap.release()
         cv2.destroyAllWindows()
-        print("📷 Camera stopped")
